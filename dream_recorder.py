@@ -10,6 +10,7 @@ import argparse
 
 from flask import Flask, render_template, jsonify, request, send_file
 from flask_socketio import SocketIO, emit
+from dataclasses import dataclass
 from functions.dream_db import DreamDB
 from functions.audio import create_wav_file, process_audio
 from functions.config_loader import load_config, get_config
@@ -32,11 +33,15 @@ recording_state = {
     'video_url': None
 }
 
-# Video playback state
-video_playback_state = {
-    'current_index': 0,  # Index of the current video being played
-    'is_playing': False  # Whether a video is currently playing
-}
+
+# Video playback session management
+@dataclass
+class PlaybackSession:
+    current_index: int = 0  # Index of the current video being played
+    is_playing: bool = False  # Whether a video is currently playing
+
+# Active playback sessions keyed by Socket.IO session id (SID)
+playback_sessions = {}
 
 # Audio buffer for storing chunks
 audio_buffer = io.BytesIO()
@@ -113,6 +118,8 @@ async def async_process_audio(sid, socketio, dream_db, recording_state, audio_ch
 @socketio.on('connect')
 def handle_connect(auth=None):
     """Handle new client connection."""
+    sid = request.sid
+    playback_sessions[sid] = PlaybackSession()
     if logger:
         logger.info('Client connected')
     emit('state_update', recording_state)
@@ -120,6 +127,8 @@ def handle_connect(auth=None):
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handle client disconnection."""
+    sid = request.sid
+    playback_sessions.pop(sid, None)
     if logger:
         logger.info('Client disconnected')
 
@@ -184,24 +193,30 @@ def handle_show_previous_dream():
             if logger:
                 logger.warning("No dreams found to cycle through.")
             return None
+        # Retrieve or create this client's playback session
+        sid = request.sid
+        session = playback_sessions.setdefault(sid, PlaybackSession())
+
         # If we're currently playing a video, show the next one in sequence
-        if video_playback_state['is_playing']:
-            video_playback_state['current_index'] += 1
-            if video_playback_state['current_index'] >= len(dreams):
-                video_playback_state['current_index'] = 0  # Wrap around
+        if session.is_playing:
+            session.current_index += 1
+            if session.current_index >= len(dreams):
+                session.current_index = 0  # Wrap around
         else:
             # If not playing, start with the most recent dream
-            video_playback_state['current_index'] = 0
-            video_playback_state['is_playing'] = True
+            session.current_index = 0
+            session.is_playing = True
+
         # Get the dream at the current index
-        dream = dreams[video_playback_state['current_index']]
+        dream = dreams[session.current_index]
+
         # Emit the video URL to the client
         socketio.emit('play_video', {
             'video_url': f"/media/video/{dream['video_filename']}",
             'loop': True  # Enable looping for the video
         })
         if logger:
-            logger.info(f"Emitted play_video for dream index {video_playback_state['current_index']}: {dream['video_filename']}")
+            logger.info(f"Emitted play_video for dream index {session.current_index}: {dream['video_filename']}")
 
         if not dream:
             socketio.emit('error', {'message': 'No dreams found'})
