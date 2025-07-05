@@ -7,6 +7,7 @@ import shutil
 
 from datetime import datetime
 from functions.config_loader import get_config
+from functions.retry_helper import retry_call
 
 def process_video(input_path, logger=None):
     """Process the video using FFmpeg with specific filters from environment variables."""
@@ -79,7 +80,7 @@ def process_thumbnail(video_path, logger=None):
             logger.error(f"Error generating thumbnail: {str(e)}")
         raise
 
-def generate_video(prompt, filename=None, luma_extend=False, logger=None, config=None):
+def generate_video(prompt, filename=None, luma_extend=False, logger=None, config=None, socketio=None, sid=None):
     """Generate a video using Luma Labs API, with optional extension if LUMA_EXTEND is set."""
     try:
         # If luma_extend, split the prompt into two parts
@@ -89,20 +90,23 @@ def generate_video(prompt, filename=None, luma_extend=False, logger=None, config
             initial_prompt = prompt
             extension_prompt = 'Continue on with this video'  # fallback
         # Step 1: Create the initial generation request
-        response = requests.post(
-            get_config()['LUMA_GENERATIONS_ENDPOINT'],
-            headers={
-                'accept': 'application/json',
-                'authorization': f"Bearer {get_config()['LUMALABS_API_KEY']}",
-                'content-type': 'application/json'
-            },
-            json={
-                'prompt': initial_prompt,
-                'model': get_config()['LUMA_MODEL'],
-                'resolution': get_config()['LUMA_RESOLUTION'],
-                'duration': get_config()['LUMA_DURATION'],
-                "aspect_ratio": get_config()['LUMA_ASPECT_RATIO'],
-            }
+        response = retry_call(
+            lambda: requests.post(
+                get_config()['LUMA_GENERATIONS_ENDPOINT'],
+                headers={
+                    'accept': 'application/json',
+                    'authorization': f"Bearer {get_config()['LUMALABS_API_KEY']}",
+                    'content-type': 'application/json'
+                },
+                json={
+                    'prompt': initial_prompt,
+                    'model': get_config()['LUMA_MODEL'],
+                    'resolution': get_config()['LUMA_RESOLUTION'],
+                    'duration': get_config()['LUMA_DURATION'],
+                    "aspect_ratio": get_config()['LUMA_ASPECT_RATIO'],
+                }
+            ),
+            logger=logger,
         )
         if response.status_code not in [200, 201]:
             raise Exception(f"Luma API error: {response.text}")
@@ -119,12 +123,15 @@ def generate_video(prompt, filename=None, luma_extend=False, logger=None, config
             max_attempts = int(get_config()['LUMA_MAX_POLL_ATTEMPTS'])
             poll_interval = float(get_config()['LUMA_POLL_INTERVAL'])
             for attempt in range(max_attempts):
-                status_response = requests.get(
-                    f"{get_config()['LUMA_API_URL']}/generations/{generation_id}",
-                    headers={
-                        'accept': 'application/json',
-                        'authorization': f"Bearer {get_config()['LUMALABS_API_KEY']}"
-                    }
+                status_response = retry_call(
+                    lambda: requests.get(
+                        f"{get_config()['LUMA_API_URL']}/generations/{generation_id}",
+                        headers={
+                            'accept': 'application/json',
+                            'authorization': f"Bearer {get_config()['LUMALABS_API_KEY']}"
+                        }
+                    ),
+                    logger=logger,
                 )
                 if status_response.status_code not in [200, 201]:
                     if logger:
@@ -164,26 +171,29 @@ def generate_video(prompt, filename=None, luma_extend=False, logger=None, config
             if logger:
                 logger.info("LUMA_EXTEND is set. Requesting video extension.")
             _ = poll_for_completion(generation_id)  # Wait for completion
-            extend_response = requests.post(
-                get_config()['LUMA_GENERATIONS_ENDPOINT'],
-                headers={
-                    'accept': 'application/json',
-                    'authorization': f"Bearer {get_config()['LUMALABS_API_KEY']}",
-                    'content-type': 'application/json'
-                },
-                json={
-                    'model': get_config()['LUMA_MODEL'],
-                    'resolution': get_config()['LUMA_RESOLUTION'],
-                    'duration': get_config()['LUMA_DURATION'],
-                    "aspect_ratio": get_config()['LUMA_ASPECT_RATIO'],
-                    'prompt': extension_prompt,
-                    'keyframes': {
-                        'frame0': {
-                            'type': 'generation',
-                            'id': generation_id
+            extend_response = retry_call(
+                lambda: requests.post(
+                    get_config()['LUMA_GENERATIONS_ENDPOINT'],
+                    headers={
+                        'accept': 'application/json',
+                        'authorization': f"Bearer {get_config()['LUMALABS_API_KEY']}",
+                        'content-type': 'application/json'
+                    },
+                    json={
+                        'model': get_config()['LUMA_MODEL'],
+                        'resolution': get_config()['LUMA_RESOLUTION'],
+                        'duration': get_config()['LUMA_DURATION'],
+                        "aspect_ratio": get_config()['LUMA_ASPECT_RATIO'],
+                        'prompt': extension_prompt,
+                        'keyframes': {
+                            'frame0': {
+                                'type': 'generation',
+                                'id': generation_id
+                            }
                         }
                     }
-                }
+                ),
+                logger=logger,
             )
             if extend_response.status_code not in [200, 201]:
                 raise Exception(f"Luma API error (extend): {extend_response.text}")
@@ -199,7 +209,10 @@ def generate_video(prompt, filename=None, luma_extend=False, logger=None, config
         else:
             video_url = poll_for_completion(generation_id)
         # Download the generated video
-        video_response = requests.get(video_url, stream=True)
+        video_response = retry_call(
+            lambda: requests.get(video_url, stream=True),
+            logger=logger,
+        )
         video_response.raise_for_status()
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -218,6 +231,8 @@ def generate_video(prompt, filename=None, luma_extend=False, logger=None, config
         thumb_filename = process_thumbnail(processed_video_path, logger)
         return filename, thumb_filename
     except Exception as e:
+        if socketio:
+            socketio.emit('video_generation_error', {'message': str(e)}, room=sid) if sid else socketio.emit('video_generation_error', {'message': str(e)})
         if logger:
             logger.error(f"Error generating video: {str(e)}")
         raise

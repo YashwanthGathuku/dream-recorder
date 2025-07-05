@@ -378,4 +378,39 @@ def test_generate_video_outer_exception_no_logger(monkeypatch, mock_config):
     def raise_exc(*a, **k): raise Exception('outer fail')
     monkeypatch.setattr(video.requests, 'post', raise_exc)
     with pytest.raises(Exception):
-        video.generate_video('prompt', filename='file.mp4', luma_extend=False, logger=None) 
+        video.generate_video('prompt', filename='file.mp4', luma_extend=False, logger=None)
+
+def test_generate_video_retry_success(monkeypatch, mock_config, mock_logger):
+    attempts = {'n': 0}
+    def maybe_fail(*a, **k):
+        attempts['n'] += 1
+        if attempts['n'] < 2:
+            raise Exception('fail')
+        resp = mock.Mock()
+        resp.status_code = 200
+        resp.json.return_value = {'id': 'genid'}
+        return resp
+    monkeypatch.setattr(video.requests, 'post', maybe_fail)
+    fake_get = mock.Mock()
+    fake_get.status_code = 200
+    fake_get.json.return_value = {'state': 'completed', 'assets': {'video': 'http://video.url'}}
+    fake_get.iter_content = lambda chunk_size: [b'data']
+    fake_get.raise_for_status = lambda: None
+    monkeypatch.setattr(video.requests, 'get', lambda *a, **k: fake_get)
+    monkeypatch.setattr(video.os, 'makedirs', lambda d, exist_ok: None)
+    monkeypatch.setattr(video, 'process_video', lambda *a, **k: 'processed.mp4')
+    monkeypatch.setattr(video, 'process_thumbnail', lambda *a, **k: 'thumb.png')
+    fake_socketio = mock.Mock()
+    result = video.generate_video('prompt', filename='file.mp4', luma_extend=False, logger=mock_logger, socketio=fake_socketio, sid='sid')
+    assert result == ('file.mp4', 'thumb.png')
+    assert attempts['n'] == 2
+    assert not any(c[0][0] == 'video_generation_error' for c in fake_socketio.emit.call_args_list)
+
+def test_generate_video_retry_failure(monkeypatch, mock_config, mock_logger):
+    def always_fail(*a, **k):
+        raise Exception('fail')
+    monkeypatch.setattr(video.requests, 'post', always_fail)
+    fake_socketio = mock.Mock()
+    with pytest.raises(Exception):
+        video.generate_video('prompt', filename='file.mp4', luma_extend=False, logger=mock_logger, socketio=fake_socketio, sid='sid')
+    fake_socketio.emit.assert_any_call('video_generation_error', {'message': 'fail'}, room='sid')

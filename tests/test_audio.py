@@ -187,4 +187,39 @@ def test_process_audio_emit_sid_and_no_sid(monkeypatch, mock_config, mock_logger
     # Check that emit was called with and without room
     calls = [c for c in fake_socketio.emit.call_args_list]
     assert any('room' in c[1] for c in calls)  # with sid
-    assert any('room' not in c[1] for c in calls)  # without sid 
+    assert any('room' not in c[1] for c in calls)  # without sid
+
+def test_transcription_retry_success(monkeypatch, mock_config, mock_logger):
+    monkeypatch.setattr(audio, 'save_wav_file', lambda *a, **k: 'file.wav')
+    attempts = {'n': 0}
+    def maybe_fail(**kwargs):
+        attempts['n'] += 1
+        if attempts['n'] < 2:
+            raise Exception('fail')
+        return mock.Mock(text='ok')
+    monkeypatch.setattr(audio.client.audio.transcriptions, 'create', maybe_fail)
+    monkeypatch.setattr(audio, 'generate_video_prompt', lambda *a, **k: 'video')
+    monkeypatch.setattr(audio, 'generate_video', lambda *a, **k: ('video.mp4', 't.png'))
+    fake_db = mock.Mock()
+    fake_socketio = mock.Mock()
+    recording_state = {}
+    audio_chunks = [b'a']
+    audio.process_audio('sid', fake_socketio, fake_db, recording_state, audio_chunks, logger=mock_logger)
+    assert attempts['n'] == 2
+    assert recording_state['status'] == 'complete'
+    assert not any(c[0][0] == 'transcription_error' for c in fake_socketio.emit.call_args_list)
+
+def test_transcription_retry_failure(monkeypatch, mock_config, mock_logger):
+    monkeypatch.setattr(audio, 'save_wav_file', lambda *a, **k: 'file.wav')
+    def always_fail(**kwargs):
+        raise Exception('fail')
+    monkeypatch.setattr(audio.client.audio.transcriptions, 'create', always_fail)
+    monkeypatch.setattr(audio, 'generate_video_prompt', lambda *a, **k: 'video')
+    monkeypatch.setattr(audio, 'generate_video', lambda *a, **k: ('video.mp4', 't.png'))
+    fake_db = mock.Mock()
+    fake_socketio = mock.Mock()
+    recording_state = {}
+    audio_chunks = [b'a']
+    audio.process_audio('sid', fake_socketio, fake_db, recording_state, audio_chunks, logger=mock_logger)
+    assert recording_state['status'] == 'error'
+    fake_socketio.emit.assert_any_call('transcription_error', {'message': 'fail'}, room='sid')
