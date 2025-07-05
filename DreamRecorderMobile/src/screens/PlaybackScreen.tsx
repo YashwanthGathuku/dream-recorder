@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, Button } from 'react-native';
+import Video from 'react-native-video';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator'; // We'll create this next
 
@@ -8,16 +9,12 @@ type PlaybackScreenProps = NativeStackScreenProps<RootStackParamList, 'Playback'
 const PlaybackScreen: React.FC<PlaybackScreenProps> = ({ route, navigation }) => {
   const { dreamId } = route.params;
 
-  // In a real app, use dreamId to fetch video URL and details
-  // and use a <Video> component to play it.
+  const videoUrl = `http://localhost:8000/videos/${dreamId}.mp4`;
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Playing Dream</Text>
-      <View style={styles.videoPlaceholder}>
-        <Text>Video Player for Dream ID: {dreamId}</Text>
-        {/* Placeholder for <Video /> component */}
-      </View>
+      <Video source={{ uri: videoUrl }} style={styles.video} controls resizeMode="contain" />
       <View style={styles.controls}>
         <Button
           title="Play Previous (Simulated)"
@@ -44,14 +41,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 20,
   },
-  videoPlaceholder: {
+  video: {
     width: '100%',
     aspectRatio: 16 / 9, // Common video aspect ratio
-    backgroundColor: '#333', // Dark placeholder for video
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: '#000',
     marginBottom: 20,
-    borderRadius: 8,
   },
   controls: {
     flexDirection: 'row',
