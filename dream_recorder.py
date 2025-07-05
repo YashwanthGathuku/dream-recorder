@@ -1,12 +1,10 @@
 # =============================
 # Imports & Initial Setup
 # =============================
-from gevent import monkey
-monkey.patch_all()
+import asyncio
 
 import os
 import logging
-import gevent
 import io
 import argparse
 
@@ -60,7 +58,7 @@ app.config.update(
 )
 
 # Initialize SocketIO
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="asgi")
 
 # Initialize DreamDB
 dream_db = DreamDB()
@@ -101,6 +99,12 @@ def init_sample_dreams_if_missing():
             print("Failed to initialize sample dreams.")
     except Exception as e:
         print(f"Exception while initializing sample dreams: {e}")
+
+async def async_process_audio(sid, socketio, dream_db, recording_state, audio_chunks, logger=None):
+    """Run the synchronous process_audio function in a thread."""
+    await asyncio.to_thread(
+        process_audio, sid, socketio, dream_db, recording_state, audio_chunks, logger
+    )
 
 # =============================
 # SocketIO Event Handlers
@@ -146,7 +150,7 @@ def handle_audio_data(data):
             emit('error', {'message': f"Error handling audio data: {str(e)}"})
 
 @socketio.on('stop_recording')
-def handle_stop_recording():
+async def handle_stop_recording():
     """Socket event to stop recording and trigger processing."""
     if recording_state['is_recording']:
         sid = request.sid # Get SID before changing state
@@ -158,12 +162,12 @@ def handle_stop_recording():
             logger.info(f"Finalizing recording. Status set to processing. Triggering process_audio for SID: {sid}")
 
         # Process the audio in a background task, passing all required arguments
-        gevent.spawn(
-            process_audio, sid, socketio, dream_db, recording_state, audio_chunks, logger
+        asyncio.create_task(
+            async_process_audio(sid, socketio, dream_db, recording_state, audio_chunks, logger)
         )
 
         # Emit the comprehensive state update after finalizing
-        emit('state_update', recording_state)
+        await emit('state_update', recording_state)
         if logger:
             logger.info('Stopped recording via socket event.')
     else:
@@ -344,10 +348,15 @@ if __name__ == '__main__':  # pragma: no cover
     parser.add_argument('--reload', action='store_true', help='Enable auto-reloader')
     args = parser.parse_args()
     # Start the Flask-SocketIO server
-    socketio.run(
-        app, 
-        host=app.config['HOST'], 
-        port=app.config['PORT'], 
-        debug=app.config['DEBUG'],
-        use_reloader=args.reload
-    ) 
+    if app.config['DEBUG']:
+        socketio.run(
+            app,
+            host=app.config['HOST'],
+            port=app.config['PORT'],
+            debug=True,
+            use_reloader=args.reload
+        )
+    else:
+        import uvicorn
+        asgi_app = socketio.ASGIApp(app)
+        uvicorn.run(asgi_app, host=app.config['HOST'], port=app.config['PORT'])
