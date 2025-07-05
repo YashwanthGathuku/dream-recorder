@@ -15,6 +15,7 @@ from flask_socketio import SocketIO, emit
 from functions.dream_db import DreamDB
 from functions.audio import create_wav_file, process_audio
 from functions.config_loader import load_config, get_config
+from admin_blueprint import admin_bp
 
 # Configure logging
 logging.basicConfig(level=getattr(logging, get_config()["LOG_LEVEL"]))
@@ -63,6 +64,9 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 # Initialize DreamDB
 dream_db = DreamDB()
+
+# Register blueprints
+app.register_blueprint(admin_bp)
 
 # =============================
 # Core Logic / Helper Functions
