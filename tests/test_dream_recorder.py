@@ -110,9 +110,10 @@ def test_handle_show_previous_dream_no_dream(monkeypatch, mocker):
         def info(self, msg): pass
         def error(self, msg): pass
     monkeypatch.setattr(dream_recorder, 'logger', FakeLogger())
-    # Set video_playback_state to simulate playing
-    dream_recorder.video_playback_state['is_playing'] = True
-    dream_recorder.video_playback_state['current_index'] = 0
+    dream_recorder.playback_sessions.clear()
+    sid = 'test-sid'
+    dream_recorder.playback_sessions[sid] = dream_recorder.PlaybackSession(current_index=0, is_playing=True)
+    monkeypatch.setattr(dream_recorder, 'request', type('Req', (), {'sid': sid}))
     dream_recorder.handle_show_previous_dream()
     assert any('No dreams found to cycle through.' in msg for msg in logs)
 
@@ -130,9 +131,10 @@ def test_handle_show_previous_dream_dream_is_none(monkeypatch, mocker):
     # Patch socketio.emit to record calls
     emitted = []
     monkeypatch.setattr(dream_recorder.socketio, 'emit', lambda name, data=None: emitted.append((name, data)))
-    # Set video_playback_state to simulate playing
-    dream_recorder.video_playback_state['is_playing'] = True
-    dream_recorder.video_playback_state['current_index'] = 0
+    dream_recorder.playback_sessions.clear()
+    sid = 'test-sid'
+    dream_recorder.playback_sessions[sid] = dream_recorder.PlaybackSession(current_index=0, is_playing=True)
+    monkeypatch.setattr(dream_recorder, 'request', type('Req', (), {'sid': sid}))
     dream_recorder.handle_show_previous_dream()
     # Should emit error
     assert any(name == 'error' for name, _ in emitted)
