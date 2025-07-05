@@ -7,6 +7,7 @@ import wave
 from datetime import datetime
 from functions.video import generate_video
 from functions.config_loader import get_config
+from functions.retry_helper import retry_call
 from openai import OpenAI
 
 # Initialize OpenAI client
@@ -53,14 +54,17 @@ def generate_video_prompt(transcription, luma_extend=False, logger=None, config=
     """Generate an enhanced video prompt from the transcription using GPT."""
     try:
         system_prompt = get_config()['GPT_SYSTEM_PROMPT_EXTEND'] if luma_extend else get_config()['GPT_SYSTEM_PROMPT']
-        response = client.chat.completions.create(
-            model=get_config()['GPT_MODEL'],
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"{transcription}"}
-            ],
-            temperature=float(get_config()['GPT_TEMPERATURE']),
-            max_tokens=int(get_config()['GPT_MAX_TOKENS'])
+        response = retry_call(
+            lambda: client.chat.completions.create(
+                model=get_config()['GPT_MODEL'],
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"{transcription}"}
+                ],
+                temperature=float(get_config()['GPT_TEMPERATURE']),
+                max_tokens=int(get_config()['GPT_MAX_TOKENS'])
+            ),
+            logger=logger,
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -80,11 +84,18 @@ def process_audio(sid, socketio, dream_db, recording_state, audio_chunks, logger
             temp_file.write(audio_data)
             temp_file_path = temp_file.name
         # Transcribe the audio using OpenAI's Whisper API
-        with open(temp_file_path, 'rb') as audio_file:
-            transcription = client.audio.transcriptions.create(
-                model=get_config()['WHISPER_MODEL'],
-                file=audio_file
-            )
+        try:
+            with open(temp_file_path, 'rb') as audio_file:
+                transcription = retry_call(
+                    lambda: client.audio.transcriptions.create(
+                        model=get_config()['WHISPER_MODEL'],
+                        file=audio_file
+                    ),
+                    logger=logger,
+                )
+        except Exception as e:
+            socketio.emit('transcription_error', {'message': str(e)}, room=sid) if sid else socketio.emit('transcription_error', {'message': str(e)})
+            raise
         # Update the transcription in the global state
         recording_state['transcription'] = transcription.text
         # Emit the transcription
@@ -97,13 +108,24 @@ def process_audio(sid, socketio, dream_db, recording_state, audio_chunks, logger
         # Generate video prompt
         video_prompt = generate_video_prompt(transcription=transcription.text, luma_extend=luma_extend, logger=logger, config=get_config())
         if not video_prompt:
+            socketio.emit('prompt_error', {'message': 'Failed to generate video prompt'}, room=sid) if sid else socketio.emit('prompt_error', {'message': 'Failed to generate video prompt'})
             raise Exception("Failed to generate video prompt")
         recording_state['video_prompt'] = video_prompt
         if sid:
             socketio.emit('video_prompt_update', {'text': video_prompt}, room=sid)
         else:
             socketio.emit('video_prompt_update', {'text': video_prompt})
-        video_filename, thumb_filename = generate_video(prompt=video_prompt, luma_extend=luma_extend, logger=logger)
+        try:
+            video_filename, thumb_filename = generate_video(
+                prompt=video_prompt,
+                luma_extend=luma_extend,
+                logger=logger,
+                socketio=socketio,
+                sid=sid,
+            )
+        except Exception as e:
+            socketio.emit('video_generation_error', {'message': str(e)}, room=sid) if sid else socketio.emit('video_generation_error', {'message': str(e)})
+            raise
         # Save to database
         DreamData = None
         try:

@@ -1,0 +1,2 @@
+class Greenlet:
+    pass
