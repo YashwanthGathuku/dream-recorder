@@ -99,7 +99,7 @@ class DreamDB:
                     thumb_filename=sample['thumb_dest'],
                     status='completed',
                 )
-                self.save_dream(dream_data.model_dump())
+                self.save_dream(dream_data.dict())
                 if logger:
                     logger.info(f"Inserted sample dream {i}")
             else:

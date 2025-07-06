@@ -2,7 +2,7 @@ services:
   app:
     build: .
     ports:
-      - "${PORT}:${PORT}"
+      - "${PORT}:5000"
     volumes:
       - .:/app
       - db-data:/app/db

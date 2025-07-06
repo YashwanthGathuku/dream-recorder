@@ -10,11 +10,13 @@ import argparse
 
 from flask import Flask, render_template, jsonify, request, send_file
 from flask_socketio import SocketIO, emit
+from flask_cors import CORS
 from dataclasses import dataclass
 from functions.dream_db import DreamDB
 from functions.audio import create_wav_file, process_audio
 from functions.config_loader import load_config, get_config
 from admin_blueprint import admin_bp
+from api_mobile_endpoints import mobile_api
 
 # Configure logging
 logging.basicConfig(level=getattr(logging, get_config()["LOG_LEVEL"]))
@@ -56,6 +58,7 @@ audio_chunks = []
 
 # Initialize Flask app
 app = Flask(__name__)
+CORS(app, origins=["*"], supports_credentials=True)
 app.config.update(
     DEBUG=os.environ.get("FLASK_ENV", "production") == "development",
     HOST=get_config()["HOST"],
@@ -63,13 +66,14 @@ app.config.update(
 )
 
 # Initialize SocketIO
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="asgi")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 # Initialize DreamDB
 dream_db = DreamDB()
 
 # Register blueprints
 app.register_blueprint(admin_bp)
+app.register_blueprint(mobile_api)
 
 # =============================
 # Core Logic / Helper Functions
@@ -372,6 +376,10 @@ if __name__ == '__main__':  # pragma: no cover
             use_reloader=args.reload
         )
     else:
-        import uvicorn
-        asgi_app = socketio.ASGIApp(app)
-        uvicorn.run(asgi_app, host=app.config['HOST'], port=app.config['PORT'])
+        socketio.run(
+            app,
+            host=app.config['HOST'],
+            port=app.config['PORT'],
+            debug=False,
+            allow_unsafe_werkzeug=True
+        )
