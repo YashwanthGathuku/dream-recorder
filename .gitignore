@@ -260,3 +260,4 @@ media/thumbs/*
 db/*
 !db/.gitkeep
 dream_recorder_env
+dr_env

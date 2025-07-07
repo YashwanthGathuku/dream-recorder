@@ -10,8 +10,8 @@ export interface Environment {
 
 // Development environment (local development)
 const development: Environment = {
-  apiBaseUrl: 'http://localhost:5000',
-  websocketUrl: 'ws://localhost:5000',
+  apiBaseUrl: 'http://192.168.56.1:5000',
+  websocketUrl: 'ws://192.168.56.1:5000',
   isDevelopment: true,
   isProduction: false,
   isStaging: false,

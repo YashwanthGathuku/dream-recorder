@@ -38,7 +38,8 @@ interface DreamsResponse {
 
 class ApiService {
   private socket: Socket | null = null;
-  private baseUrl: string = 'http://localhost:5000'; // Will be configurable
+  // TODO: Set this to your computer's local IP address and backend port
+  private baseUrl = 'http://192.168.1.100:5000'; // <-- CHANGE THIS to your actual IP and port
   private isConnected: boolean = false;
 
   constructor(baseUrl?: string) {
